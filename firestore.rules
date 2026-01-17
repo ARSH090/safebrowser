@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function: check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Helper function: check if user owns document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users collection - Parent accounts
+    match /users/{userId} {
+      // Read/write only own user document
+      allow read, write: if isAuth() && isOwner(userId);
+      
+      // Create new user
+      allow create: if isAuth() && isOwner(userId) && 
+        request.resource.data.keys().hasAll(['email', 'role', 'createdAt']);
+      
+      // Update only allowed fields
+      allow update: if isAuth() && isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'createdAt']);
+    }
+
+    // Child profiles collection (under user)
+    match /users/{userId}/childProfiles/{childId} {
+      // User can read/write their own children
+      allow read, write: if isAuth() && isOwner(userId);
+      
+      allow create: if isAuth() && isOwner(userId) &&
+        request.resource.data.keys().hasAll(['name', 'ageGroup']);
+    }
+
+    // Logs collection - Activity logging (IMMUTABLE)
+    match /users/{userId}/logs/{logId} {
+      // Parents can read their child's logs
+      allow read: if isAuth() && isOwner(userId);
+      
+      // Only allow creation (via Cloud Functions)
+      allow create: if isAuth() && isOwner(userId);
+      
+      // Logs cannot be modified after creation
+      allow update, delete: if false;
+    }
+
+    // Settings collection - Safety preferences
+    match /users/{userId}/settings/{document=**} {
+      allow read, write: if isAuth() && isOwner(userId);
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
